@@ -4,7 +4,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -16,20 +15,37 @@ lib64/
 parts/
 sdist/
 var/
+wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 
-# Environment variables
+# Virtual Environment
+venv/
+ENV/
+env/
 .env
-
-# Database
-*.db
-*.sqlite3
 
 # IDE
 .idea/
 .vscode/
+*.swp
+*.swo
+.project
+.pydevproject
+.settings/
 
-# CSV files
-*.csv
+# Project specific
+spending_tracker.db
+csv_files/*
+!csv_files/.gitkeep
+csv_files_added/*
+!csv_files_added/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# OS specific
+.DS_Store
+Thumbs.db
