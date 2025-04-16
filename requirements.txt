@@ -4,3 +4,7 @@ PyQt6-sip==13.6.0
 pandas==2.1.4
 python-dotenv==1.0.0
 numpy==1.26.2
+anthropic==0.18.1
+pydantic==2.6.1
+python-jose==3.3.0
+requests==2.31.0

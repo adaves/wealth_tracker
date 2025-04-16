@@ -24,28 +24,21 @@ wheels/
 venv/
 ENV/
 env/
-.env
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-.project
-.pydevproject
-.settings/
+.DS_Store
 
 # Project specific
-spending_tracker.db
-csv_files/*
-!csv_files/.gitkeep
-csv_files_added/*
-!csv_files_added/.gitkeep
-
-# Logs
-*.log
+*.db
 logs/
+data/csv_files/
+.env
 
-# OS specific
-.DS_Store
-Thumbs.db
+# Test files
+test_*.db
+test_csv_files/
+test_logs/

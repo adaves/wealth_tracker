@@ -2,21 +2,27 @@ import sqlite3
 from datetime import datetime
 from decimal import Decimal
 from models.transaction import Transaction
+from typing import List, Dict, Optional, Any
+from sqlite3 import Connection
+from utils.logging_config import logger
 
 class Database:
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str) -> None:
         """Initialize database with path to SQLite file"""
         self.db_path = db_path
+        logger.info(f"Initializing database at {db_path}")
         
         # Initialize database if needed
         self._init_db()
     
-    def get_connection(self):
+    def get_connection(self) -> Connection:
         """Get a database connection"""
+        logger.debug("Creating new database connection")
         return sqlite3.connect(self.db_path)
     
-    def _init_db(self):
+    def _init_db(self) -> None:
         """Initialize database tables if they don't exist"""
+        logger.info("Initializing database tables")
         with self.get_connection() as conn:
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS accounts (
@@ -51,7 +57,7 @@ class Database:
             ''')
             
             # Insert default accounts if they don't exist
-            accounts = [
+            accounts: List[str] = [
                 'PNC Checking',
                 'Chase SW',
                 'Chase Star Wars',
@@ -64,9 +70,11 @@ class Database:
                 ''', (account,))
             
             conn.commit()
+            logger.info("Database tables initialized successfully")
 
-    def get_account_transactions(self, account_name: str) -> list:
+    def get_account_transactions(self, account_name: str) -> List[Transaction]:
         """Get all transactions for a specific account"""
+        logger.debug(f"Fetching transactions for account: {account_name}")
         with self.get_connection() as conn:
             cursor = conn.execute('''
                 SELECT 
@@ -85,7 +93,7 @@ class Database:
                 ORDER BY t.date DESC, t.id DESC
             ''', (account_name,))
             
-            transactions = []
+            transactions: List[Transaction] = []
             for row in cursor.fetchall():
                 transactions.append(Transaction(
                     id=row[0],
@@ -99,10 +107,12 @@ class Database:
                     account=row[8]
                 ))
             
-            return transactions 
+            logger.info(f"Retrieved {len(transactions)} transactions for {account_name}")
+            return transactions
 
     def get_pnc_ytd_average(self) -> Decimal:
         """Get the year-to-date average balance for PNC account"""
+        logger.debug("Calculating PNC YTD average balance")
         with self.get_connection() as conn:
             cursor = conn.execute('''
                 SELECT AVG(balance)
@@ -113,12 +123,15 @@ class Database:
                 AND date <= date('now')
             ''')
             
-            result = cursor.fetchone()[0]
-            return Decimal(str(result)) if result is not None else Decimal('0') 
+            result: Optional[float] = cursor.fetchone()[0]
+            average = Decimal(str(result)) if result is not None else Decimal('0')
+            logger.info(f"PNC YTD average balance: ${average:,.2f}")
+            return average
 
-    def add_transactions_with_file(self, conn, transactions: list, file_id: int):
+    def add_transactions_with_file(self, conn: Connection, transactions: List[Transaction], file_id: int) -> None:
         """Add transactions with file_id to database"""
-        account_map = {
+        logger.debug(f"Adding {len(transactions)} transactions for file_id: {file_id}")
+        account_map: Dict[str, int] = {
             name: id_ for id_, name in 
             conn.execute('SELECT id, name FROM accounts').fetchall()
         }
@@ -139,9 +152,11 @@ class Database:
             )
             for t in transactions
         ])
+        logger.info(f"Successfully added {len(transactions)} transactions")
 
     def undo_file_import(self, filename: str) -> bool:
         """Remove all transactions associated with a specific file"""
+        logger.info(f"Attempting to undo import for file: {filename}")
         try:
             with self.get_connection() as conn:
                 # Get file_id
@@ -149,11 +164,12 @@ class Database:
                     'SELECT id FROM processed_files WHERE filename = ?',
                     (filename,)
                 )
-                result = cursor.fetchone()
+                result: Optional[tuple[int]] = cursor.fetchone()
                 if not result:
+                    logger.warning(f"File not found in processed_files: {filename}")
                     return False
                 
-                file_id = result[0]
+                file_id: int = result[0]
                 
                 # Delete transactions
                 conn.execute(
@@ -168,14 +184,16 @@ class Database:
                 )
                 
                 conn.commit()
+                logger.info(f"Successfully undid import for file: {filename}")
                 return True
                 
         except Exception as e:
-            print(f"Error undoing file import: {str(e)}")
+            logger.error(f"Error undoing file import: {str(e)}", exc_info=True)
             return False
 
-    def get_processed_files(self) -> list:
+    def get_processed_files(self) -> List[tuple[str, str, str, int]]:
         """Get list of processed files with their details"""
+        logger.debug("Fetching processed files list")
         with self.get_connection() as conn:
             cursor = conn.execute('''
                 SELECT 
@@ -189,10 +207,13 @@ class Database:
                 GROUP BY f.id
                 ORDER BY f.processed_at DESC
             ''')
-            return cursor.fetchall() 
+            files = cursor.fetchall()
+            logger.info(f"Retrieved {len(files)} processed files")
+            return files
 
     def get_account_balance(self, account_name: str) -> Decimal:
         """Get current balance for an account"""
+        logger.debug(f"Fetching current balance for account: {account_name}")
         with self.get_connection() as conn:
             cursor = conn.execute('''
                 SELECT balance
@@ -203,12 +224,15 @@ class Database:
                 LIMIT 1
             ''', (account_name,))
             
-            result = cursor.fetchone()
-            return Decimal(str(result[0])) if result and result[0] is not None else Decimal('0')
+            result: Optional[tuple[Optional[float]]] = cursor.fetchone()
+            balance = Decimal(str(result[0])) if result and result[0] is not None else Decimal('0')
+            logger.info(f"Current balance for {account_name}: ${balance:,.2f}")
+            return balance
 
-    def get_all_account_balances(self) -> dict:
+    def get_all_account_balances(self) -> Dict[str, Decimal]:
         """Get current balances for all accounts"""
-        balances = {}
+        logger.debug("Fetching balances for all accounts")
+        balances: Dict[str, Decimal] = {}
         with self.get_connection() as conn:
             cursor = conn.execute('''
                 SELECT a.name, t.balance
@@ -226,11 +250,13 @@ class Database:
             
             for name, balance in cursor.fetchall():
                 balances[name] = Decimal(str(balance)) if balance is not None else Decimal('0')
-                
-        return balances 
+            
+            logger.info("Retrieved balances for all accounts")
+            return balances
 
-    def debug_print_transactions(self):
+    def debug_print_transactions(self) -> None:
         """Debug method to print all transactions in database"""
+        logger.debug("Printing database contents for debugging")
         with self.get_connection() as conn:
             print("\n=== Database Contents ===")
             
@@ -245,7 +271,7 @@ class Database:
                 GROUP BY a.id, a.name
                 ORDER BY a.id
             ''')
-            accounts = cursor.fetchall()
+            accounts: List[tuple[int, str, int]] = cursor.fetchall()
             print("\nAccounts and Transaction Counts:")
             for id, name, count in accounts:
                 print(f"  {id}: {name} - {count} transactions")
@@ -257,20 +283,22 @@ class Database:
                 JOIN accounts a ON t.account_id = a.id
                 ORDER BY a.name, t.date DESC
             ''')
-            transactions = cursor.fetchall()
+            transactions: List[tuple[int, str, str, str, float, Optional[float]]] = cursor.fetchall()
             print("\nTransactions:")
             for t in transactions:
                 print(f"  {t[1]} - {t[2]}: {t[3]} (${t[4]}) Balance: ${t[5] or 'N/A'}")
             
-            print("\n======================") 
+            print("\n======================")
+            logger.debug("Finished printing database contents")
 
-    def check_database_integrity(self):
+    def check_database_integrity(self) -> None:
         """Check database tables and data integrity"""
+        logger.info("Starting database integrity check")
         with self.get_connection() as conn:
             print("\n=== Database Integrity Check ===")
             
             # Check tables exist
-            tables = conn.execute("""
+            tables: List[tuple[str]] = conn.execute("""
                 SELECT name FROM sqlite_master 
                 WHERE type='table' 
                 ORDER BY name
@@ -278,8 +306,8 @@ class Database:
             
             print("\nDatabase Tables:")
             for table in tables:
-                table_name = table[0]
-                row_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+                table_name: str = table[0]
+                row_count: int = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
                 print(f"  {table_name}: {row_count} rows")
             
             # Check processed files
@@ -300,4 +328,5 @@ class Database:
             for row in cursor.fetchall():
                 print(f"  {row[0]} ({row[1]}) - {row[3]} transactions")
             
-            print("\n=============================") 
+            print("\n=============================")
+            logger.info("Completed database integrity check") 
