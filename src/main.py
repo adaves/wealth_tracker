@@ -28,6 +28,9 @@ def main(test_db_path: str = None) -> None:
         logger.info(f"Initializing database at: {db_path}")
         database: Database = Database(db_path)
         
+        # Start backup scheduler
+        database.schedule_weekly_backup()
+        
         # Create application
         logger.debug("Creating QApplication instance")
         app: QApplication = QApplication(sys.argv)

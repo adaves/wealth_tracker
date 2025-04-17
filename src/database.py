@@ -5,11 +5,16 @@ from models.transaction import Transaction
 from typing import List, Dict, Optional, Any
 from sqlite3 import Connection
 from utils.logging_config import logger
+import shutil
+import os
+from pathlib import Path
 
 class Database:
     def __init__(self, db_path: str) -> None:
         """Initialize database with path to SQLite file"""
         self.db_path = db_path
+        self.backup_dir = os.path.join(os.path.dirname(os.path.dirname(db_path)), 'data', 'backups')
+        os.makedirs(self.backup_dir, exist_ok=True)
         logger.info(f"Initializing database at {db_path}")
         
         # Initialize database if needed
@@ -329,4 +334,147 @@ class Database:
                 print(f"  {row[0]} ({row[1]}) - {row[3]} transactions")
             
             print("\n=============================")
-            logger.info("Completed database integrity check") 
+            logger.info("Completed database integrity check")
+
+    def create_backup(self) -> str:
+        """
+        Create a backup of the database file with timestamp.
+        Returns the path to the backup file.
+        """
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_filename = f"spending_tracker_{timestamp}.db"
+        backup_path = os.path.join(self.backup_dir, backup_filename)
+        
+        try:
+            shutil.copy2(self.db_path, backup_path)
+            logger.info(f"Created database backup at: {backup_path}")
+            return backup_path
+        except Exception as e:
+            logger.error(f"Failed to create backup: {str(e)}", exc_info=True)
+            raise
+
+    def restore_from_backup(self, backup_path: str) -> bool:
+        """
+        Restore the database from a backup file.
+        Returns True if successful, False otherwise.
+        """
+        if not os.path.exists(backup_path):
+            logger.error(f"Backup file not found: {backup_path}")
+            return False
+            
+        try:
+            # Create a backup of current database before restoring
+            current_backup = self.create_backup()
+            logger.info(f"Created backup of current database before restore: {current_backup}")
+            
+            # Close any existing connections
+            if hasattr(self, '_connection') and self._connection:
+                self._connection.close()
+            
+            # Copy backup file to current database location
+            shutil.copy2(backup_path, self.db_path)
+            logger.info(f"Successfully restored database from backup: {backup_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to restore from backup: {str(e)}", exc_info=True)
+            return False
+
+    def get_available_backups(self) -> List[Dict[str, Any]]:
+        """
+        Get a list of available backups with their metadata.
+        Returns a list of dictionaries containing:
+        - path: full path to backup file
+        - filename: name of backup file
+        - timestamp: datetime object of when backup was created
+        - size: size of backup file in bytes
+        """
+        backups = []
+        try:
+            for filename in os.listdir(self.backup_dir):
+                if filename.startswith('spending_tracker_') and filename.endswith('.db'):
+                    filepath = os.path.join(self.backup_dir, filename)
+                    # Extract timestamp from filename
+                    timestamp_str = filename.replace('spending_tracker_', '').replace('.db', '')
+                    try:
+                        timestamp = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
+                        backups.append({
+                            'path': filepath,
+                            'filename': filename,
+                            'timestamp': timestamp,
+                            'size': os.path.getsize(filepath)
+                        })
+                    except ValueError:
+                        logger.warning(f"Could not parse timestamp from backup filename: {filename}")
+                        continue
+            
+            # Sort backups by timestamp (newest first)
+            backups.sort(key=lambda x: x['timestamp'], reverse=True)
+            return backups
+            
+        except Exception as e:
+            logger.error(f"Error listing backups: {str(e)}", exc_info=True)
+            return []
+
+    def cleanup_old_backups(self) -> None:
+        """
+        Remove old backups, keeping only the 2 most recent ones.
+        """
+        try:
+            backups = self.get_available_backups()
+            if len(backups) <= 2:
+                logger.info("No backups to clean up - keeping all backups")
+                return
+
+            # Keep the 2 most recent backups
+            backups_to_keep = backups[:2]
+            backups_to_delete = backups[2:]
+
+            for backup in backups_to_delete:
+                try:
+                    os.remove(backup['path'])
+                    logger.info(f"Deleted old backup: {backup['filename']}")
+                except Exception as e:
+                    logger.error(f"Failed to delete backup {backup['filename']}: {str(e)}", exc_info=True)
+
+            logger.info(f"Cleanup complete. Kept {len(backups_to_keep)} most recent backups.")
+        except Exception as e:
+            logger.error(f"Error during backup cleanup: {str(e)}", exc_info=True)
+
+    def schedule_weekly_backup(self) -> None:
+        """
+        Schedule weekly backups for Monday at 5:30 AM.
+        The backup will run when the computer is next available if it misses the scheduled time.
+        """
+        try:
+            import schedule
+            import time
+            from threading import Thread
+
+            def backup_job():
+                """Job to run backup and cleanup"""
+                try:
+                    logger.info("Running scheduled weekly backup")
+                    self.create_backup()
+                    self.cleanup_old_backups()
+                except Exception as e:
+                    logger.error(f"Error in scheduled backup job: {str(e)}", exc_info=True)
+
+            # Schedule backup for Monday at 5:30 AM
+            schedule.every().monday.at("05:30").do(backup_job)
+
+            def run_scheduler():
+                """Run the scheduler in a separate thread"""
+                while True:
+                    schedule.run_pending()
+                    time.sleep(60)  # Check every minute
+
+            # Start scheduler in a daemon thread
+            scheduler_thread = Thread(target=run_scheduler, daemon=True)
+            scheduler_thread.start()
+            logger.info("Weekly backup scheduler started (Mondays at 5:30 AM)")
+
+        except ImportError:
+            logger.error("schedule package not installed. Please install it with: pip install schedule")
+        except Exception as e:
+            logger.error(f"Error setting up backup scheduler: {str(e)}", exc_info=True) 
